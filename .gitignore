@@ -22,4 +22,6 @@
 # dotenv environment variables file
 .env
 
-nft.json
+mindchainGenesisNFT.json
+whitelist.json
+deployments.old/

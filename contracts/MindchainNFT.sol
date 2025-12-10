@@ -7,42 +7,136 @@ import {ERC721Burnable} from "@openzeppelin/contracts/token/ERC721/extensions/ER
 import {ERC721Enumerable} from "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import {ERC721URIStorage} from "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+
+/// @title Interface pour le contrat Mindchain DAO
+interface IMindchainDAO {
+    /// @notice Vérifie si une adresse est membre du DAO.
+    /// @param _address L'adresse à vérifier.
+    function isMember(address _address) external view returns (bool);
+}
 
 contract MindchainNFT is ERC721, ERC721Enumerable, ERC721URIStorage, ERC721Burnable, Ownable {
-    
-    uint256 private _nextTokenId;
 
+    // Référence au contrat DAO pour la gestion des membres
+    IMindchainDAO public mindchainDAO;
+    // Balance du contrat
+    uint256 public contractBalance;
+    // Compteur pour l'ID des tokens
+    uint256 private _nextNftTokenId;
+    // Prix de mint par défaut
+    uint256 public mintPrice = 0.01 ether;
+    // Mapping des adresses qui ont minté
+    mapping(address => bool) private hasMinted;
+    // Racine de l'arbre de Merkle pour les adresses qui ont mint
+    bytes32 public merkleRoot;
+
+    // Événement émis lors du mint d'un nouveau Mindchain NFT
     event MindchainMinted(
         address indexed owner,
         uint256 indexed tokenId,
         string metadataCid
     );
+    event MindchainBurned(
+        address indexed owner,
+        uint256 indexed tokenId
+    );
+    event Event(string message);
 
-    constructor(address _initialOwner)
-        ERC721("Mindchain", "MDC")
+    /// @notice Constructeur pour initialiser le contrat Mindchain NFT.
+    /// @param _initialOwner L'adresse du propriétaire initial du contrat.
+    /// @param _genesisNftUri L'URI des métadonnées du NFT initial à minter.
+    /// @param _merkleRoot La racine Merkle pour la validation des certificats.
+    /// @param tokenName Le nom du token ERC721.
+    /// @param tokenSymbol Le symbole du token ERC721.
+    constructor(
+        address _initialOwner, 
+        string memory _genesisNftUri, 
+        bytes32 _merkleRoot,
+        string memory tokenName,
+        string memory tokenSymbol
+    )
+        ERC721(tokenName, tokenSymbol)
         Ownable(_initialOwner)
-    {}
+    {
+        // Initialisation des variables
+        mindchainDAO = IMindchainDAO(_initialOwner);
+        merkleRoot = _merkleRoot;
+        // Mint un NFT initial au propriétaire du contrat
+        mintMindchainNFT(_initialOwner, _genesisNftUri);
+        emit MindchainMinted(_initialOwner, 0, _genesisNftUri);
 
+    }
 
-    /// @notice Safely mints a new token with the given URI to the specified address.
-    /// @dev Only the contract owner can call this function. => Mindchain is the owner
-    /// @param _to The address to mint the token to.
-    /// @param _uri The URI of the token metadata. => a JSON file stored on IPFS
-    /// @return Token ID of the newly minted token.
-    function mintMindchain(address _to, string memory _uri) 
+    /// @notice Fonction pour recevoir des fonds.
+    receive() external payable {
+        contractBalance += msg.value;
+    }
+
+    /// @notice Minte un nouveau Mindchain NFT à l'adresse spécifiée avec les métadonnées fournies.
+    /// @param _to L'adresse à laquelle le token sera minté.
+    /// @param _uri L'URI des métadonnées du token. => un fichier JSON stocké sur IPFS
+    /// @return ID du token nouvellement minté.
+    function mintMindchainNFT(address _to, string memory _uri) 
         public
-        payable
         returns (uint256)
-    {   // Set the token ID to the next available ID
-        uint256 _tokenId = _nextTokenId++;
-        // Mint the token and set its URI
-        _safeMint(_to, _tokenId);
-        // Set the token URI
-        _setTokenURI(_tokenId, _uri);
-        // Emit event
-        emit MindchainMinted(_to, _tokenId, _uri);
-        // Return the new token ID
-        return _tokenId;
+    {   // Incrémente l'ID du token
+        uint256 _nftTokenId = _nextNftTokenId++;
+        // Mint le token
+        _safeMint(_to, _nftTokenId);
+        // Définit l'URI des métadonnées
+        _setTokenURI(_nftTokenId, _uri);
+        // Approuve le propriétaire pour gérer le token
+        // _setApprovalForAll(_to, owner, true);
+        // Emet l'événement de mint
+        emit MindchainMinted(_to, _nftTokenId, _uri);
+        // Retourne l'ID du token minté
+        return _nftTokenId;
+    }
+
+    /// @notice Modifie le prix de mint des NFTs.
+    /// @param _newPrice Le nouveau prix de mint.
+    function setMintPrice(uint256 _newPrice) external onlyOwner {
+        mintPrice = _newPrice;
+    }
+
+    /// @notice Retire des fonds du contrat vers une adresse spécifiée.
+    /// @param _to L'adresse vers laquelle les fonds seront envoyés.
+    /// @param _amount Le montant des fonds à retirer.
+    function withdrawValue(address payable _to, uint _amount) external {
+        // Pour éviter la faille de reentrancy
+        uint value = _amount;
+        require(mindchainDAO.isMember(msg.sender), "Not a DAO member");
+        require(value <= address(this).balance, "Insufficient balance");
+        _to.transfer(value);
+    }
+
+    /// @notice Retourne un tableau des IDs de tokens possédés par une adresse donnée.
+    /// @param _address L'adresse pour laquelle interroger les IDs de tokens possédés.
+    /// @return Un tableau des IDs de tokens possédés par l'adresse spécifiée.
+    function getTokenIDsByAddress(address _address)
+        external
+        view
+        returns (uint256[] memory)
+    {
+        uint256 _tokenCount = balanceOf(_address);
+        uint256[] memory tokenIds = new uint256[](_tokenCount);
+        for (uint256 i = 0; i < _tokenCount; i++) {
+            tokenIds[i] = tokenOfOwnerByIndex(_address, i);
+        }
+        return tokenIds;
+    }
+
+    /// @notice Supprime un Mindchain NFT en brûlant le token avec l'ID spécifié.
+    /// @param _tokenId L'ID du token à brûler.
+    function deleteMindchainNFT(uint256 _tokenId)
+        external
+    {
+        // Vérifie que l'appelant est le propriétaire du token
+        require(msg.sender == ownerOf(_tokenId), "Not the token owner");
+        burn(_tokenId);
+        // Emet l'événement de burn
+        emit MindchainBurned(msg.sender, _tokenId);
     }
 
 
