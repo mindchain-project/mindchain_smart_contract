@@ -31,6 +31,9 @@ contract MindchainNFT is ERC721, ERC721Enumerable, ERC721URIStorage, ERC721Burna
     // Racine de l'arbre de Merkle pour les adresses qui ont mint
     bytes32 public merkleRoot;
 
+    // Mapping des whitelists par catégorie
+    mapping(string => mapping(address => bool)) private whitelists;
+
     // Événement émis lors du mint d'un nouveau Mindchain NFT
     event MindchainMinted(
         address indexed owner,
@@ -64,6 +67,7 @@ contract MindchainNFT is ERC721, ERC721Enumerable, ERC721URIStorage, ERC721Burna
         merkleRoot = _merkleRoot;
         // Mint un NFT initial au propriétaire du contrat
         mintMindchainNFT(_initialOwner, _genesisNftUri);
+        hasMinted[_initialOwner] = true;
         emit MindchainMinted(_initialOwner, 0, _genesisNftUri);
 
     }
@@ -87,11 +91,17 @@ contract MindchainNFT is ERC721, ERC721Enumerable, ERC721URIStorage, ERC721Burna
         // Définit l'URI des métadonnées
         _setTokenURI(_nftTokenId, _uri);
         // Approuve le propriétaire pour gérer le token
-        // _setApprovalForAll(_to, owner, true);
+        // _setApprovalForAll(_to, owner, true); //TODO: à vérifier si nécessaire
         // Emet l'événement de mint
         emit MindchainMinted(_to, _nftTokenId, _uri);
         // Retourne l'ID du token minté
         return _nftTokenId;
+    }
+
+    /// @notice Vérifie si une adresse a déjà minté un NFT.
+    /// @param _address L'adresse à vérifier.
+    function hasAddressMinted(address _address) external view returns (bool) {
+        return hasMinted[_address];
     }
 
     /// @notice Modifie le prix de mint des NFTs.

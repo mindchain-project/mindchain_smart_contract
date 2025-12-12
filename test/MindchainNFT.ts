@@ -54,22 +54,57 @@ describe("Mindchain NFT Contract", function () {
         expect(await contract.name()).to.equal(tokenName);
         expect(await contract.symbol()).to.equal(tokenSymbol);
     });
-    // 3. Vérification qu'un NFT est minté au déploiement
+  });
+  describe("2. Minting and Ownership", function () {
+
+    let contract: any;
+    let owner: any;
+    let whitelist: any;
+    let merkleTree: any;
+    let tokenName = "";
+    let tokenSymbol = "";
+
+    beforeEach(async function () {
+      const setup = await setUpContract();
+      contract = setup.contract;
+      owner = setup.owner;
+      whitelist = setup.whitelist;
+      merkleTree = setup.merkleTree;
+      tokenName = setup.tokenName;
+      tokenSymbol = setup.tokenSymbol;
+    });
+    // 1. Vérification qu'un NFT est minté au déploiement
     it("Should have genesis NFT minted at deployment", async function () {
         const nextTokenId = await contract.totalSupply();
         expect(nextTokenId).to.equal(1n);
+        const ownerOfGenesisNFT = await contract.ownerOf(0);
+        expect(ownerOfGenesisNFT).to.equal(owner.address);
     });
-    // 4. Vérification que l'adresse owner est bien dans la whitelist
-    it("Owner address should be whitelisted", async function () {
-        const isOwnerWhitelisted = await contract.connect(owner).isAddressWhitelisted(owner.address);
-        expect(isOwnerWhitelisted).to.be.true;
+    // 2. Vérification du mapping des adresses ayant minté un NFT
+    it("Should track addresses that have minted NFTs", async function () {
+        const hasMinted = await contract.hasAddressMinted(owner.address);
+        console.log(`L'adresse ${owner.address} a minté un NFT : ${hasMinted}`);
+        expect(hasMinted).to.be.true;
+
     });
-    // 5. Vérification que les adresses admin sont bien dans la whitelist
-    it("Admin addresses should be whitelisted", async function () {
-        for (const adminAddress of whitelist.whitelistedAdmins) {
-            const isWhitelisted = await contract.connect(owner).isAddressWhitelisted(adminAddress);
-            expect(isWhitelisted).to.be.true;
-        }
+    // 3. Retourne la liste des token IDs mintés par une adresse
+    it("Should return list of token IDs minted by an address", async function () {
+        const tokenIds = await contract.getTokenIDsByAddress(owner.address);
+        console.log(`Token IDs mintés par l'adresse ${owner.address} : ${tokenIds}`);
+        expect(tokenIds.length).to.equal(1);
+        expect(tokenIds[0]).to.equal(0);
+    });
+    // 4. Vérification d'un mint par une adresse whitelisted
+    it("Whitelisted address should be able to mint a NFT", async function () {
+        const whitelistedAddress = whitelist[1]; 
+        const proof = merkleTree.getProof([whitelistedAddress]);
+        const uri = "bafkreidvbhs33ighmljlvr7zbv2ywwzcmp5adtf4kqvlly67cy56bdtmve";
+        const mintTx = await contract.connect(ethers.getSigner(whitelistedAddress)).mintMindchainWithProof(uri, proof);
+        await expect(mintTx)
+            .to.emit(contract, "MindchainMinted")
+            .withArgs(whitelistedAddress, 1, uri);
+        const nextTokenId = await contract.totalSupply();
+        expect(nextTokenId).to.equal(2n);
     });
   });
 
